@@ -36,7 +36,8 @@ IDE error ⇒ IDE false negative. The IDE may be stricter than the runtime only 
 
 ## 2. Runtime findings that correct `test.md`
 
-`test.md` Part D step 2 says not to edit A.4, so the corrections are recorded here. Each row is backed by a probe run.
+`test.md` Part D step 2 says not to edit A.4, so the corrections are recorded here. Each row is backed by a probe run;
+R16 and R17 come from the plugin's own code (IntelliJ IDEA build 271.153, `spring-modulith.jar`).
 
 | # | `test.md` says | Spring Modulith 1.4.13 does | What changed here |
 |---|---|---|---|
@@ -55,6 +56,8 @@ IDE error ⇒ IDE false negative. The IDE may be stricter than the runtime only 
 | R13 | — | `sharedModules = ["shared"]` adds `shared` to every declared list; runtime messages end with `Allowed targets: …, shared.` | An IDE message without `shared` is fine. A flagged `shared` target is a bug |
 | R14 | TC-X-01: nested carrier class, record | A nested `@PackageInfo @NamedInterface("inner") class Meta` is a carrier. In a sub-package it creates `inner`. In the module **base package** the unnamed interface becomes empty and `inner` is not registered, so the module exposes nothing | TC-X-01 records both placements |
 | R15 | TC-X-06: jMolecules `@Module` on a Kotlin carrier | `org.jmolecules.ddd.annotation.Module` 1.10.0 cannot target a Kotlin class: `This annotation is not applicable to target 'class'` | TC-X-06 only checks that the IDE does not crash |
+| R16 | TC-VIEW-01 names a "module icon", a "nested icon" and a "named-interface (green) icon" | The plugin has exactly three package icons (`SpringModulithIcons`): `packagePublic` = **green open padlock**, `packageNested` = **yellow closed padlock**, `packageInternal` = **red closed padlock**. Module roots, package-level named interfaces and packages inside an OPEN module all share the green one; only nested module roots are yellow | §3.4 lists the expected icon of every package; the icon rows reference it |
+| R17 | TC-DECL-02 and TC-VIEW-02 expect the location text to equal `displayName` (`Catalog`, `Reporting` listed) | The Project view decorator hides the text when `displayName` with its first letter lowercased equals the package name, i.e. when it is only the default name. `Catalog`, `Reporting`, `Inventory`, `Details`, `Api` are never shown; `Order Module`, `Order Web`, `Other Billing`, `Notes (bare carrier)` are | TC-DECL-02, TC-VIEW-02 and §3.4 expect four location texts |
 
 Other changes, without contradicting `test.md`:
 - Gradle 8.14.6 instead of 9.x. Boot 3.5 supports Gradle 7.6.4+ and 8.x, and KGP 2.2.21 is tested up to 8.14.
@@ -144,6 +147,55 @@ The oracle for the VIEW, DEP, and DECL rows. Observed on the committed state (`A
 Every carrier type belongs to an interface (A.4 item 4). `InventoryInternalVisible` (Kotlin `internal`) is exposed;
 `InventoryPrivate` (Kotlin `private`) is not.
 
+### 3.4 Expected icons and location text
+
+Source: the plugin itself (IntelliJ IDEA build 271.153, `spring-modulith.jar`: `SpringModulithIcons`,
+`projectView/SpringModulithProjectViewNodeDecorator`, `structure/model/SpringModulithModulePresentationProvider`).
+The Project view decorator decides per package, in this order:
+
+1. **Package-level named interface** (`NamedInterface.Kind.PACKAGE`) → `packagePublic`: **green open padlock** on the
+   package folder, no location text. A type-level `@NamedInterface` does not change the package icon.
+2. **Module root** → `packageNested` (**yellow closed padlock**) for a nested module, otherwise `packagePublic`
+   (**green open padlock**). Location text = `displayName`, hidden when `displayName` with its first letter lowercased
+   equals the package name (R17).
+3. **Package inside a module** → green open padlock when that module is OPEN, otherwise `packageInternal`:
+   **red closed padlock**. No location text.
+4. **Any other package** (`com/example`, `com/other`) → default package icon.
+
+Structure view (`Alt+7` on the application class): top-level modules green, nested modules yellow, `| OPEN` after the
+package name of an open module; children of *Allowed Dependencies* use the plain package icon. Bean completion: a
+**yellow warning triangle** at the right of an entry whose injection would cross a module boundary (help page, "Apply
+the Spring Modulith's guidelines").
+
+Expected on the fixed build, from the runtime model in §3.3. Baseline predictions in **bold** differ.
+
+| Project view node | Icon (fixed build) | Location text (fixed build) | Baseline prediction |
+|---|---|---|---|
+| `com/example`, `com/other` | default package icon | – | default |
+| `order` | green open padlock | `Order Module` | green, no text |
+| `order/internal` | red closed padlock | – | red |
+| `order/spi` | green (named interface `spi`) | – | green |
+| `order/web` | **yellow closed padlock** | `Order Web` | **red** (internal package of `order`), no text |
+| `order/web/internal` | red | – | red |
+| `order/web/details` | **yellow** | – (`Details` is the default name) | **red** |
+| `order/api` | **yellow** | – (`Api`) | **red** |
+| `order/api/internal` | red | – | red |
+| `inventory` | green | – (`Inventory`) | green |
+| `inventory/internal` | red | – | red |
+| `catalog` | green | – (`Catalog` equals the default name, R17) | green |
+| `catalog/api` | green (named interface `api`) | – | green |
+| `catalog/events` | red (type-level named interface) | – | red |
+| `catalog/legacy` | green (named interfaces `legacy`, `compat`) | – | green |
+| `catalog/internal` | red | – | red |
+| `shared` | green | – (`Shared`) | green |
+| `shared/internal` | **green** (OPEN) | – | **red** |
+| `billing` | green | – (`Billing`) | green |
+| `pricing` | green | – (`Pricing`) | green |
+| `pricing/internal` | **green** (OPEN) | – | **red** |
+| `notes` | green | `Notes (bare carrier)` | green, **no text** |
+| `reporting` (`src/main/kotlin` and `src/main/java` nodes) | green | – (`Reporting`) | green; second node: record (TC-VIEW-04) |
+| `com/other/billing` | green | `Other Billing` | green if `additionalPackages` is read (TC-SRC-12), no text |
+
 ---
 
 ## 4. Environment and procedure
@@ -161,6 +213,8 @@ How to observe:
 - **Runtime violation:** PASS = the error is shown on the marked reference.
 - Hover the reference and press `Alt+Enter`. Run *Code | Inspect Code* on the module once per build as a second observation.
 - Wait for indexing and for the 500 ms model debounce after every edit.
+- **Icons and location text:** compare the Project view with the table in §3.4. The three padlocks differ in colour
+  and in the shackle (green = open, yellow and red = closed); the location text is the grey text after the name.
 - **Snippets:** apply one, observe, run `./gradlew test` when the row says so, then revert with
   `git checkout -- . && git clean -fd`.
 - After every group, open *Help → Show Log* and filter on `com.intellij.spring.modulith`. Any exception is a finding.
@@ -177,25 +231,25 @@ Compare meaning, not text, and write the IDE text into the matrix.
 
 | ID | Scenario | Where / snippet | Runtime (1.4.13) | IDE expected | Baseline prediction |
 |---|---|---|---|---|---|
-| TC-DECL-01 | `@ApplicationModule @PackageInfo class ModuleMetadata` declares a top-level module | `order/ModuleMetadata.kt:12` | ✔ module `order`, display `Order Module` | Project view: `order` has the module icon and the location text `Order Module`; Structure view lists id `order` | Icon yes; no location text; no allowed dependencies in Structure |
-| TC-DECL-02 | `displayName` read from Kotlin | `order/ModuleMetadata.kt:8`, `catalog/ModuleMetadata.kt:7` | ✔ `Order Module`, `Catalog`; also `Order Web`, `Other Billing`, `Notes (bare carrier)` | Location text equals `displayName` | Capitalized directory name only |
-| TC-DECL-03 | `id` from a `const val` | `catalog/ModuleMetadata.kt:7` (`ModuleIds.kt:5`); then rename the package `catalog` → `catalogue` (*Refactor → Rename package*) | ✔ id `catalog`. After the rename: id still `catalog`, base package `com.example.catalogue`, `"catalog :: api"` still resolves, `verify()` passes | Before and after the rename: `"catalog :: api"` in `order` resolves; Structure shows `Id: catalog` | Falls back to the directory name. Passes by accident before the rename; after it the module is `catalogue` |
+| TC-DECL-01 | `@ApplicationModule @PackageInfo class ModuleMetadata` declares a top-level module | `order/ModuleMetadata.kt:12` | ✔ module `order`, display `Order Module` | Project view: `order` shows the green open padlock and the location text `Order Module`; Structure view lists `order` with the green padlock | Green padlock yes (directory-based module); no location text; no allowed dependencies in Structure |
+| TC-DECL-02 | `displayName` read from Kotlin | `order/ModuleMetadata.kt:8`, `catalog/ModuleMetadata.kt:7` | ✔ `Order Module`, `Catalog`; also `Order Web`, `Other Billing`, `Notes (bare carrier)` | Location text `Order Module`, `Order Web`, `Other Billing`, `Notes (bare carrier)`. **No** text on `catalog`: the decorator hides a display name that is only the capitalized package name (R17); rename the package to `catalogue` (TC-DECL-03) to make `Catalog` appear | No location text anywhere (the model has only directory names) |
+| TC-DECL-03 | `id` from a `const val` | `catalog/ModuleMetadata.kt:7` (`ModuleIds.kt:5`); then rename the package `catalog` → `catalogue` (*Refactor → Rename package*) | ✔ id `catalog`. After the rename: id still `catalog`, base package `com.example.catalogue`, `"catalog :: api"` still resolves, `verify()` passes | Before and after the rename: `"catalog :: api"` in `order` resolves; Structure shows `Id: catalog`. After the rename the location text `Catalog` appears on `catalogue`, because it no longer equals the package name (R17) | Falls back to the directory name. Passes by accident before the rename; after it the module is `catalogue` |
 | TC-DECL-04 | Carrier is an `object` | `catalog/ModuleMetadata.kt:9` | ✔ detected | Same as a class | Same as a class |
-| TC-DECL-05 | Carrier with a free name (`ApiMarker`) | `catalog/api/ApiMarker.kt:7` | ✔ ni `api`: `ApiMarker`, `CatalogApi` | Named-interface icon on `catalog/api`; Structure lists `api` with both types | Works (named interfaces already read `@PackageInfo` types) |
-| TC-DECL-06 | `type = ApplicationModule.Type.OPEN` | `shared/ModuleMetadata.kt:6`; reference `order/OrderService.kt:13` | ✔ `shared` OPEN; the reference to `SharedInternal` is legal | `shared/internal` green; `OrderService.kt:13` not flagged; Structure shows `OPEN` | **Red icon; `OrderService.kt:13` flagged (false positive)** |
-| TC-DECL-06b | `type = Type.OPEN` through `import org.springframework.modulith.ApplicationModule.Type` | `pricing/ModuleMetadata.kt:7`; reference `catalog/CatalogService.kt:11` | ✔ `pricing` OPEN; the reference to `PriceTable` is legal | Same as TC-DECL-06 | **Same false positive on `CatalogService.kt:11`**; B5 must handle both spellings |
-| TC-DECL-07 | Bare carrier without `@PackageInfo` (R1) | `notes/ModuleMetadata.kt:7`; [S-DECL-07](#s-decl-07) | ✔ **read**: display `Notes (bare carrier)`, allowed none (+shared). Snippet: `Module 'notes' depends on module 'inventory' via com.example.notes.NotesService -> com.example.inventory.InventoryApi. Allowed targets: shared.` | Agrees with the runtime: location text `Notes (bare carrier)`; the snippet is flagged "Module 'notes' has no allowed dependencies" | **No location text; snippet not flagged** |
+| TC-DECL-05 | Carrier with a free name (`ApiMarker`) | `catalog/api/ApiMarker.kt:7` | ✔ ni `api`: `ApiMarker`, `CatalogApi` | `catalog/api` shows the green open padlock and no location text; Structure lists `api` with both types | Works (named interfaces already read `@PackageInfo` types) |
+| TC-DECL-06 | `type = ApplicationModule.Type.OPEN` | `shared/ModuleMetadata.kt:6`; reference `order/OrderService.kt:13` | ✔ `shared` OPEN; the reference to `SharedInternal` is legal | `shared/internal` shows the green open padlock; `OrderService.kt:13` not flagged; Structure shows `Shared com.example.shared \| OPEN` | **`shared/internal` red closed padlock; `OrderService.kt:13` flagged (false positive)** |
+| TC-DECL-06b | `type = Type.OPEN` through `import org.springframework.modulith.ApplicationModule.Type` | `pricing/ModuleMetadata.kt:7`; reference `catalog/CatalogService.kt:11` | ✔ `pricing` OPEN; the reference to `PriceTable` is legal | Same as TC-DECL-06: `pricing/internal` green open padlock, `CatalogService.kt:11` not flagged, `Pricing … \| OPEN` in Structure | **`pricing/internal` red closed padlock; `CatalogService.kt:11` flagged**; B5 must handle both spellings |
+| TC-DECL-07 | Bare carrier without `@PackageInfo` (R1) | `notes/ModuleMetadata.kt:7`; [S-DECL-07](#s-decl-07) | ✔ **read**: display `Notes (bare carrier)`, allowed none (+shared). Snippet: `Module 'notes' depends on module 'inventory' via com.example.notes.NotesService -> com.example.inventory.InventoryApi. Allowed targets: shared.` | Agrees with the runtime: `notes` keeps the green open padlock and shows the location text `Notes (bare carrier)`; the snippet is flagged "Module 'notes' has no allowed dependencies" | **Green padlock but no location text; snippet not flagged** |
 | TC-DECL-08 | Two `@PackageInfo` types with `@ApplicationModule` in one package | [S-DECL-08](#s-decl-08) | ✔ `IllegalStateException: Expected maximum of one type in package com.example.order to be annotated with o.s.m.ApplicationModule, but got [...]` from `ApplicationModules.of()`; all three B.3 tests fail | No exception in the IDE log; one declaration wins; ideally a warning on both types | Model ignores both |
-| TC-DECL-09 | `private class ModuleMetadata` in `order/spi` (package-private in bytecode) | [S-DECL-09](#s-decl-09) | ✔ ni `spi` still detected, now only `OrderSpi`; the consumer `inventory/SpiProbe.kt` is legal | ni `spi` still detected; consumer not flagged | **`isPublicClass` filter: ni lost, `OrderSpi` internal, consumer flagged (false positive)** |
+| TC-DECL-09 | `private class ModuleMetadata` in `order/spi` (package-private in bytecode) | [S-DECL-09](#s-decl-09) | ✔ ni `spi` still detected, now only `OrderSpi`; the consumer `inventory/SpiProbe.kt` is legal | ni `spi` still detected: `order/spi` keeps the green open padlock; consumer not flagged | **`isPublicClass` filter: ni lost, `order/spi` turns into the red closed padlock, `OrderSpi` internal, consumer flagged (false positive)** |
 | TC-DECL-10 | `internal class ModuleMetadata` in `order/spi` | `order/spi/ModuleMetadata.kt:8` → `internal class ModuleMetadata` | ✔ ni `spi`: `ModuleMetadata`, `OrderSpi` | Detected | Detected (public in bytecode) |
 | TC-DECL-11 | The carrier is exposed API (A.4 item 4) | [S-DECL-11](#s-decl-11) | ✔ legal | Not flagged | Not flagged |
 | TC-DECL-12 | `arrayOf(...)` instead of `[...]` | `order/ModuleMetadata.kt:9` → `allowedDependencies = arrayOf(ModuleIds.INVENTORY, "catalog :: api", "shared :: *"),` | ✔ same list as `[...]` | Same as `[...]` (Structure, completion, validation) | List ignored |
 | TC-DECL-13 | `allowedDependencies = "inventory"` without brackets | `order/ModuleMetadata.kt:9` → `allowedDependencies = "inventory",` | ✔ compile error `Argument type mismatch: actual type is 'String', but 'Array<String>' was expected.` | Kotlin error shown; no plugin exception; model unchanged | Same |
 | TC-DECL-14 | `@NamedInterface(name = "api")` without brackets | `catalog/api/ApiMarker.kt:7` → `@NamedInterface(name = "api")` | ✔ the same compile error | Kotlin error; no plugin exception | Same |
-| TC-DECL-15 | `@NamedInterface("legacy", "compat")`: two names for one package | `catalog/legacy/ModuleMetadata.kt:7` | ✔ ni `legacy` and `compat`, both `LegacyCatalog`, `ModuleMetadata` | Structure lists both; `"catalog :: compat"` completes and validates | Both detected; **completion absent (B6)** |
+| TC-DECL-15 | `@NamedInterface("legacy", "compat")`: two names for one package | `catalog/legacy/ModuleMetadata.kt:7` | ✔ ni `legacy` and `compat`, both `LegacyCatalog`, `ModuleMetadata` | `catalog/legacy` shows the green open padlock; Structure lists both names; `"catalog :: compat"` completes and validates | Both detected, green padlock; **completion absent (B6)** |
 | TC-DECL-16 | `@PackageInfo @NamedInterface class ModuleMetadata` without a name | `order/spi/ModuleMetadata.kt:7` → `@NamedInterface` | ✔ ni named `spi` after the package: `ModuleMetadata`, `OrderSpi` | Same | Same |
-| TC-DECL-16b | *New (R1).* `@NamedInterface("spi")` **without** `@PackageInfo` | delete `order/spi/ModuleMetadata.kt:6` (`@PackageInfo`) | ✔ type-level ni: `spi` = `ModuleMetadata` only; `OrderSpi` becomes internal | Same as the runtime: no named-interface icon on `order/spi`; the S-DECL-09 consumer `SpiProbe.kt` is flagged | Same (type-level `@NamedInterface` is read) |
-| TC-DECL-17 | `@NamedInterface("events")` on a type exposes only that type | `catalog/events/CatalogChanged.kt:5`; [S-DECL-17](#s-decl-17) | ✔ ni `events`: `CatalogChanged`. **a)** `Module 'order' depends on named interface(s) 'catalog :: events' via com.example.order.CatalogEventsProbe -> com.example.catalog.events.CatalogChanged. Allowed targets: inventory, catalog :: api, shared :: *, shared.` and `Module 'order' depends on non-exposed type com.example.catalog.events.CatalogEventsInternal within module 'catalog'!` **b)** with `"catalog :: events"` in the list: legal | a) both references flagged; b) not flagged | a) **`CatalogChanged` not flagged** (list ignored), `CatalogEventsInternal` flagged; b) not flagged |
+| TC-DECL-16b | *New (R1).* `@NamedInterface("spi")` **without** `@PackageInfo` | delete `order/spi/ModuleMetadata.kt:6` (`@PackageInfo`) | ✔ type-level ni: `spi` = `ModuleMetadata` only; `OrderSpi` becomes internal | Same as the runtime: `order/spi` switches from the green open padlock to the red closed padlock (a type-level named interface does not colour the package); the S-DECL-09 consumer `SpiProbe.kt` is flagged | Same (type-level `@NamedInterface` is read) |
+| TC-DECL-17 | `@NamedInterface("events")` on a type exposes only that type | `catalog/events/CatalogChanged.kt:5`; [S-DECL-17](#s-decl-17) | ✔ ni `events`: `CatalogChanged`. **a)** `Module 'order' depends on named interface(s) 'catalog :: events' via com.example.order.CatalogEventsProbe -> com.example.catalog.events.CatalogChanged. Allowed targets: inventory, catalog :: api, shared :: *, shared.` and `Module 'order' depends on non-exposed type com.example.catalog.events.CatalogEventsInternal within module 'catalog'!` **b)** with `"catalog :: events"` in the list: legal | a) both references flagged; b) not flagged. `catalog/events` keeps the red closed padlock in both cases | a) **`CatalogChanged` not flagged** (list ignored), `CatalogEventsInternal` flagged; b) not flagged; `catalog/events` red |
 | TC-DECL-18 | `@file:JvmName("OrderUtils")` on a facade in the module root | insert `@file:JvmName("OrderUtils")` before line 1 of `order/OrderFunctions.kt` | ✔ unnamed interface lists `OrderUtils` instead of `OrderFunctionsKt` | Structure lists `OrderUtils` as an exposed type | Same |
 
 ### 5.2 NEST — nested modules declared in Kotlin
@@ -204,7 +258,7 @@ The rules are those of the Java scenario (IDEA-383778, IDEA-376940), plus R3: a 
 
 | ID | Scenario | Where / snippet | Runtime (1.4.13) | IDE expected | Baseline prediction |
 |---|---|---|---|---|---|
-| TC-NEST-01 | Nested module from a Kotlin carrier | `order/web/ModuleMetadata.kt:6` | ✔ `order.web`, parent `order` | Nested-module icon; Structure lists `order.web` | **Internal package of `order`; `order.web` absent** |
+| TC-NEST-01 | Nested module from a Kotlin carrier | `order/web/ModuleMetadata.kt:6` | ✔ `order.web`, parent `order` | `order/web` shows the **yellow closed padlock** (`packageNested`) and the location text `Order Web`; `order/web/details` and `order/api` yellow without text (default names); Structure lists `order.web`, `order.web.details`, `order.api` with the yellow padlock | **Red closed padlock (internal package of `order`), no text; `order.web` absent from Structure** |
 | TC-NEST-02 | Nested → parent internal | `order/web/OrderController.kt:15` | ✔ legal | Not flagged | Not flagged (same module in the baseline model) |
 | TC-NEST-03 | Grandchild → grandparent internal | `order/web/details/OrderWebDetail.kt:8` | ✔ legal | Not flagged | Not flagged |
 | TC-NEST-04 | *Changed (R3).* Nested module **with its own list** → parent internal | [S-NEST-04](#s-nest-04) | ✔ **violation** `Module 'order.api' depends on module 'order' via com.example.order.api.ParentInternalProbe -> com.example.order.internal.OrderRepository. Allowed targets: inventory, shared.` | Flagged. If not, repeat with a Java `package-info.java` carrying the same list; if Java is silent too, file a separate, language-independent issue | Not flagged |
@@ -282,9 +336,9 @@ Setup: [S-QF](#s-qf), then `Alt+Enter` on `OrderRepository`. The runtime cell is
 | ID | Fix | IDE expected | Runtime of the result (1.4.13) | Baseline prediction | Also check |
 |---|---|---|---|---|---|
 | TC-QF-01 | *Move 'com.example.order.internal.OrderRepository' to the 'order' module base package* | `OrderRepository.kt` moves to `order/`; imports and references update; error disappears | legal (root types are exposed); not probed | B13: Java move processor on a light class; expect no-op or exception | IDE log for exceptions; undo works |
-| TC-QF-02 | *Annotate 'OrderRepository' with '@NamedInterface'* | `@NamedInterface` and its import added to the Kotlin class; error disappears | ✔ legal: ni `internal` = `OrderRepository` (the name defaults to the package) | B11: no-op or exception | offered only when the type is not already exposed |
-| TC-QF-03 | *Make the 'order' module open* | Kotlin-aware: `type = ApplicationModule.Type.OPEN` added to `order/ModuleMetadata.kt`. **Reject** a `package-info.java` under `src/main/kotlin` (never compiled) and under `src/main/java` (second carrier, R8) | ✔ `type = OPEN` in the Kotlin carrier: legal. ✔ `package-info.java` under `src/main/kotlin`: ignored, the violation stays. ✔ under `src/main/java`: `IllegalStateException: Expected maximum of one type in package com.example.order …` | **B12: creates `src/main/kotlin/com/example/order/package-info.java`; IDE green, `./gradlew test` red** | if a file is created, run `./gradlew test` |
-| TC-QF-03b | Same fix for a module without a carrier (`inventory`) | Kotlin-aware: new `inventory/ModuleMetadata.kt` with `@ApplicationModule(type = ApplicationModule.Type.OPEN) @PackageInfo`. A `package-info.java` under `src/main/java` is also fine | setup [S-QF-03b](#s-qf-03b): `Module 'order.web' depends on non-exposed type com.example.inventory.internal.StockLevel within module 'inventory'!`. ✔ Kotlin carrier with OPEN: legal. ✔ `src/main/java/com/example/inventory/package-info.java` with OPEN: legal | same as TC-QF-03 | |
+| TC-QF-02 | *Annotate 'OrderRepository' with '@NamedInterface'* | `@NamedInterface` and its import added to the Kotlin class; error disappears | ✔ legal: ni `internal` = `OrderRepository` (the name defaults to the package) | B11: no-op or exception | offered only when the type is not already exposed; `order/internal` keeps the red closed padlock (a type-level `@NamedInterface` does not colour the package) |
+| TC-QF-03 | *Make the 'order' module open* | Kotlin-aware: `type = ApplicationModule.Type.OPEN` added to `order/ModuleMetadata.kt`. **Reject** a `package-info.java` under `src/main/kotlin` (never compiled) and under `src/main/java` (second carrier, R8) | ✔ `type = OPEN` in the Kotlin carrier: legal. ✔ `package-info.java` under `src/main/kotlin`: ignored, the violation stays. ✔ under `src/main/java`: `IllegalStateException: Expected maximum of one type in package com.example.order …` | **B12: creates `src/main/kotlin/com/example/order/package-info.java`; IDE green, `./gradlew test` red** | if a file is created, run `./gradlew test`; on the IDE side `order/internal` switches from the red to the green padlock after the fix (record whether `order/web/internal` and `order/api/internal` change too) |
+| TC-QF-03b | Same fix for a module without a carrier (`inventory`) | Kotlin-aware: new `inventory/ModuleMetadata.kt` with `@ApplicationModule(type = ApplicationModule.Type.OPEN) @PackageInfo`. A `package-info.java` under `src/main/java` is also fine | setup [S-QF-03b](#s-qf-03b): `Module 'order.web' depends on non-exposed type com.example.inventory.internal.StockLevel within module 'inventory'!`. ✔ Kotlin carrier with OPEN: legal. ✔ `src/main/java/com/example/inventory/package-info.java` with OPEN: legal | same as TC-QF-03 | `inventory/internal` switches from the red to the green padlock |
 | TC-QF-04 | *Add 'catalog' as an allowed dependency of the 'order' module* (from TC-DEP-03) | `allowedDependencies = [ModuleIds.INVENTORY, "catalog :: api", "shared :: *", "catalog"]`; the constant stays a constant | ✔ legal: `inventory, catalog :: api, shared :: *, catalog, shared` | **B10: fix absent or silent no-op** | formatting of the array literal; no duplicate import |
 | TC-QF-05 | *Simplify with '@ApplicationModuleListener'* on `inventory/LegacyListener.kt:15` | Weak warning on `on`; result `@ApplicationModuleListener(id = "legacy", readOnlyTransaction = true) fun on(...)` with the `events` import; `@Async`, `@Transactional`, `@TransactionalEventListener` and their imports removed | ✔ that result compiles and the Spring context starts | **B9: no warning** | class-level `@Transactional` variant; `propagation` and `condition` are kept; two of three annotations are not reported |
 | TC-QF-06 | Intention preview for every fix above | Preview or "no preview", without exception | n/a | Same | |
@@ -294,13 +348,13 @@ Setup: [S-QF](#s-qf), then `Alt+Enter` on `OrderRepository`. The runtime cell is
 
 | ID | Scenario | IDE expected | Baseline prediction |
 |---|---|---|---|
-| TC-VIEW-01 | Project view icons | Module icon: `order`, `inventory`, `catalog`, `shared`, `billing`, `pricing`, `notes`, `reporting`, `com/other/billing`. Nested-module icon: `order/web`, `order/web/details`, `order/api`. Named interface (green): `order/spi`, `catalog/api`, `catalog/legacy`. **Red:** `catalog/events` (a type-level ni does not color the package) and every `*/internal` except `shared/internal` and `pricing/internal`, which are green (OPEN). Default folder: `com/example`, `com/other` | Nested → red; OPEN internals → red; no display names |
-| TC-VIEW-02 | Display names as location text | `Order Module`, `Catalog`, `Order Web`, `Reporting`, `Other Billing`, `Notes (bare carrier)` | `Reporting` only if gap B4 is closed; otherwise none |
-| TC-VIEW-03 | *Flatten packages* and *Compact middle packages* toggles | Icons and text stay correct in both modes | Same |
-| TC-VIEW-04 | One package in two source roots (`src/main/kotlin/…/reporting`, `src/main/java/…/reporting`) | Both directory nodes carry the same icon and text | Record |
-| TC-VIEW-05 | Structure view on `Application.kt` (`Alt+7`, logical view; `Application.kt:13`) | *Modules* lists every id of §3.3; per module `Id`, `Allowed Dependencies` (children resolve to packages), `OPEN` for `shared` and `pricing`, `Named Interfaces` with their types; carriers listed as exposed types | *Modules* node present; no `Allowed Dependencies`, no `OPEN`, nested modules missing |
+| TC-VIEW-01 | Project view icons of every package (full table in §3.4) | **Green open padlock:** `order`, `inventory`, `catalog`, `shared`, `billing`, `pricing`, `notes`, `reporting`, `com/other/billing`; the named-interface packages `order/spi`, `catalog/api`, `catalog/legacy`; the OPEN internals `shared/internal`, `pricing/internal`. **Yellow closed padlock:** `order/web`, `order/web/details`, `order/api`. **Red closed padlock:** `catalog/events` (type-level ni) and every other `*/internal`. **Default package icon:** `com/example`, `com/other` | **`order/web`, `order/web/details`, `order/api`, `shared/internal`, `pricing/internal` red**; the rest as in §3.4 (`com/other/billing`: record); no location text |
+| TC-VIEW-02 | Display names as location text | Exactly four: `Order Module` (`order`), `Order Web` (`order/web`), `Other Billing` (`com/other/billing`), `Notes (bare carrier)` (`notes`). None on `catalog` and `reporting`: the decorator hides a display name that equals the capitalized package name (R17) | **None** |
+| TC-VIEW-03 | *Flatten packages* and *Compact middle packages* toggles | Padlocks and location texts stay as in §3.4 in both modes; a flattened node such as `order.web.details` keeps the yellow padlock | Same |
+| TC-VIEW-04 | One package in two source roots (`src/main/kotlin/…/reporting`, `src/main/java/…/reporting`) | Both directory nodes show the green open padlock and no location text (`Reporting` is the default name, R17) | Record |
+| TC-VIEW-05 | Structure view on `Application.kt` (`Alt+7`, logical view; `Application.kt:13`) | *Modules* lists every id of §3.3: top-level entries with the green open padlock, `order.web`, `order.web.details`, `order.api` with the yellow closed padlock, `\| OPEN` after the package name of `shared` and `pricing`; per module `Id`, `Allowed Dependencies` (children with the plain package icon, resolving to packages), `Named Interfaces` with their types; carriers listed as exposed types | *Modules* node present with green entries only; no `Allowed Dependencies`, no `OPEN`, nested modules missing |
 | TC-VIEW-06 | Application class in a file with another name (`Main.kt` containing `class Application`) | Same as TC-VIEW-05 | Same |
-| TC-VIEW-07 | Bean completion in `billing/BillingService.kt`: `class BillingService(private val <caret>)` and `@Autowired lateinit var <caret>` | Beans of other modules carry the restricted indicator (`billing` allows nothing) | Indicator depends on the access provider; the model has no list, so no indicator |
+| TC-VIEW-07 | Bean completion in `billing/BillingService.kt`: `class BillingService(private val <caret>)` and `@Autowired lateinit var <caret>` | Every bean of another module (`orderService`, `catalogService`, `inventoryRepository`, …) carries the yellow warning triangle at the right of its completion entry, because `billing` allows nothing; `billingService` carries none. Record `sharedService` (`shared` is a shared module at runtime) | Triangle only on beans from `internal` packages (non-exposed types); none on `orderService`, `catalogService`, because the empty list is unknown |
 | TC-VIEW-08 | Compare the Structure view with `runtime-structure.txt` and §3.3 | Identical ids, display names, named interfaces, allowed dependencies | Mismatch on everything in `test.md` A.3 |
 
 ### 5.7 EVT — events and implicit usage
@@ -321,16 +375,16 @@ Setup: [S-QF](#s-qf), then `Alt+Enter` on `OrderRepository`. The runtime cell is
 |---|---|---|---|---|
 | TC-SRC-01 | JetBrains blog layout: Kotlin code, carrier `package-info.java` in `src/main/java` (`reporting/ReportingService.kt:9`, `:10`) | ✔ `reporting` = `Reporting`, list `inventory`; both references are violations (`runtime-structure.txt` §2) | Both flagged; location text `Reporting` | `:9` flagged as a non-exposed type (the UAST check needs no carrier, R11); **`:10` not flagged (B4)**; no `Reporting` text |
 | TC-SRC-02 | Prove TC-SRC-01 at runtime | ✔ `./gradlew test` green; the third test catches both `reporting` violations | n/a | n/a |
-| TC-SRC-03 | Module package only in `src/main/java` ([S-SRC-03](#s-src-03)) | ✔ module `audit` (`Audit`) detected | `audit` in Structure; module icon | **Missing (B4)** |
-| TC-SRC-04 | Application class in Java, modules in Kotlin ([S-SRC-04](#s-src-04)) | ✔ the same 12 modules as §3.3 | All detected | **All Kotlin-only module directories missing (B4)** |
+| TC-SRC-03 | Module package only in `src/main/java` ([S-SRC-03](#s-src-03)) | ✔ module `audit` (`Audit`) detected | `audit` in Structure with the green padlock; `src/main/java/com/example/audit` shows the green open padlock | **Missing (B4): default package icon** |
+| TC-SRC-04 | Application class in Java, modules in Kotlin ([S-SRC-04](#s-src-04)) | ✔ the same 12 modules as §3.3 | All detected; icons and location texts as in §3.4 | **All Kotlin-only module directories missing (B4): default package icons** |
 | TC-SRC-05 | `package-info.java` under `src/main/kotlin` for `billing` ([S-SRC-05](#s-src-05)) | ✔ ignored: `billing` keeps `Billing` and an empty list | Ignore it too, or warn that the file is not compiled. Silent acceptance (location text `Billing from src/main/kotlin`) is a mismatch to report | Accepted silently |
 | TC-SRC-06 | `kotlin { sourceSets.main { kotlin.srcDir("src/main/java") } }`, or one `src/main/java` root with mixed files | not probed | Detected | Detected (one directory) |
 | TC-SRC-07 | Maven variant (`kotlin-maven-plugin`, `src/main/kotlin`) | not probed | Same as Gradle | Same |
 | TC-SRC-08 | Multi-project build: `app` and `order-module` sharing `com.example` | not probed (the runtime scans the classpath) | Record; the model is per IDE module | Modules of the other subproject missing |
-| TC-SRC-09 | Second `@SpringBootApplication` in `main` ([S-SRC-09](#s-src-09)) | ✔ no effect: `ApplicationModules.of(Application::class.java)` names the class | Empty model, no exception; icons revert to default | Same |
-| TC-SRC-10 | Append `spring.modulith.detection-strategy=explicitly-annotated` to `application.properties` | ✔ modules `order`, `order.web`, `order.web.details`, `order.api`, `catalog`, `shared`, `billing`, `pricing`, **`notes`**, `reporting`, `other-billing`; not `inventory`. `verify()` throws `IllegalArgumentException: Invalid explicit module dependency in order! No module found with name 'inventory'.` (R5) | Same module set; `inventory` loses its icon; the `"inventory"` declarations of `order`, `order.api`, `reporting` are reported as unknown | **Zero modules, every icon default (B3)** |
+| TC-SRC-09 | Second `@SpringBootApplication` in `main` ([S-SRC-09](#s-src-09)) | ✔ no effect: `ApplicationModules.of(Application::class.java)` names the class | Empty model, no exception; every padlock reverts to the default package icon and the location texts disappear | Same |
+| TC-SRC-10 | Append `spring.modulith.detection-strategy=explicitly-annotated` to `application.properties` | ✔ modules `order`, `order.web`, `order.web.details`, `order.api`, `catalog`, `shared`, `billing`, `pricing`, **`notes`**, `reporting`, `other-billing`; not `inventory`. `verify()` throws `IllegalArgumentException: Invalid explicit module dependency in order! No module found with name 'inventory'.` (R5) | Same module set; `inventory` and `inventory/internal` fall back to the default package icon while every other package keeps its §3.4 icon; the `"inventory"` declarations of `order`, `order.api`, `reporting` are reported as unknown | **Zero modules, every icon default (B3)** |
 | TC-SRC-11 | The same key in `src/main/resources/application.yml`; separately in `application-dev.properties` | ✔ yml: as TC-SRC-10. Profile file: default strategy | yml honored; profile file not honored (production defaults) | Record |
-| TC-SRC-12 | `@Modulithic(additionalPackages = ["com.other"])` from Kotlin (`Application.kt:10`) | ✔ `other-billing` (`com.other.billing`) detected | Module icon and `Other Billing` on `com/other/billing` | Record (read through the PSI annotations of the light class); the id stays `billing` (B1) |
+| TC-SRC-12 | `@Modulithic(additionalPackages = ["com.other"])` from Kotlin (`Application.kt:10`) | ✔ `other-billing` (`com.other.billing`) detected | Green open padlock and the location text `Other Billing` on `com/other/billing` | Record (read through the PSI annotations of the light class); the id stays `billing` (B1) |
 | TC-SRC-13 | Duplicate module id across roots ([S-SRC-13](#s-src-13)) | ✔ `IllegalStateException: Duplicate key billing (attempted merging values …)` from `ApplicationModules.of()` (R2) | No exception; ideally a warning on both declarations; `"billing"` resolves to `com.example.billing` | Same; in the committed state the baseline already sees two `billing` ids (B1) |
 | TC-SRC-14 | New project wizard: Spring Boot, Kotlin, Gradle Kotlin DSL, *Spring Modulith* (+ *Spring Data JPA*, + *Actuator*) | n/a | `build.gradle.kts` has `spring-modulith-starter-core`, `spring-modulith-starter-test`, `spring-modulith-starter-jpa`, `spring-modulith-actuator`, `spring-modulith-observability` | Same. Data point: the scaffold this project replaced (IDEA 2027.1, Gradle Groovy, *Spring Modulith* only) had `starter-core`, `starter-test`, BOM 2.1.1, Boot 4.1.1 |
 
@@ -340,10 +394,10 @@ Setup: [S-QF](#s-qf), then `Alt+Enter` on `OrderRepository`. The runtime cell is
 |---|---|---|---|
 | TC-LIVE-01 | Change `displayName` in `order/ModuleMetadata.kt:8` | Location text updates | No text |
 | TC-LIVE-02 | With S-DEP-03 applied, add `"catalog"` to the list in `order/ModuleMetadata.kt:9` | TC-DEP-03 error disappears (runtime ✔ legal, TC-QF-04) | Nothing to change |
-| TC-LIVE-03 | Create `order/pricing/ModuleMetadata.kt` ([S-LIVE-03](#s-live-03)) | Directory becomes a nested module; icons switch | Stays red |
-| TC-LIVE-04 | Delete that file | Directory reverts to internal | Stays red |
-| TC-LIVE-05 | Toggle `type = ApplicationModule.Type.OPEN` in `shared/ModuleMetadata.kt:6` | `shared/internal` icon and the error on `order/OrderService.kt:13` toggle | Stays red |
-| TC-LIVE-06 | Toggle `spring.modulith.detection-strategy=explicitly-annotated` | Module set changes as in TC-SRC-10 without restart | Zero modules, then all |
+| TC-LIVE-03 | Create `order/pricing/ModuleMetadata.kt` ([S-LIVE-03](#s-live-03)) | `order/pricing` switches from the red closed padlock to the yellow closed padlock | Stays red |
+| TC-LIVE-04 | Delete that file | `order/pricing` reverts to the red closed padlock | Stays red |
+| TC-LIVE-05 | Toggle `type = ApplicationModule.Type.OPEN` in `shared/ModuleMetadata.kt:6` | `shared/internal` toggles between the green open padlock and the red closed padlock; the error on `order/OrderService.kt:13` toggles with it | Stays red |
+| TC-LIVE-06 | Toggle `spring.modulith.detection-strategy=explicitly-annotated` | Module set and icons change as in TC-SRC-10 without restart (`inventory` loses and regains the green padlock) | Zero modules (all icons default), then all |
 | TC-LIVE-07 | Undo each edit above | Model returns to the previous state | Same |
 | TC-LIVE-08 | Edit during indexing (dumb mode) | No exception; model refreshes after indexing | Same |
 
@@ -351,7 +405,7 @@ Setup: [S-QF](#s-qf), then `Alt+Enter` on `OrderRepository`. The runtime cell is
 
 | ID | Scenario | Runtime (1.4.13) | What to record in the IDE |
 |---|---|---|---|
-| TC-X-01 | Nested carrier `class Outer { @PackageInfo @NamedInterface("inner") class Meta }` ([S-X-01](#s-x-01)) | ✔ in `inventory/internal`: ni `inner` = `InventoryRepository`, `Meta`, `Outer`, `StockLevel`. In the base package `inventory`: unnamed interface empty, `inner` not registered, `order.api → InventoryApi` becomes `Module 'order.api' depends on non-exposed type com.example.inventory.InventoryApi within module 'inventory'!` (R14) | The IDE reads only top-level classes: record both placements |
+| TC-X-01 | Nested carrier `class Outer { @PackageInfo @NamedInterface("inner") class Meta }` ([S-X-01](#s-x-01)) | ✔ in `inventory/internal`: ni `inner` = `InventoryRepository`, `Meta`, `Outer`, `StockLevel`. In the base package `inventory`: unnamed interface empty, `inner` not registered, `order.api → InventoryApi` becomes `Module 'order.api' depends on non-exposed type com.example.inventory.InventoryApi within module 'inventory'!` (R14) | The IDE reads only top-level classes: record both placements, including the icon of `inventory/internal` (green only if the IDE accepts the nested carrier as a package-level named interface) |
 | TC-X-02 | Carrier is an `interface` or an `annotation class`: `billing/ModuleMetadata.kt:8` → `interface ModuleMetadata`; `src/main/kotlin/com/other/billing/ModuleMetadata.kt:10` → `annotation class ModuleMetadata` | ✔ both detected, attributes read | Both detected |
 | TC-X-03 | `@PackageInfo @ApplicationModule(displayName = "Root")` on `Application` (`Application.kt`, above `@SpringBootApplication`) | ✔ the root package is not a module; model unchanged | No crash; no `Root` module |
 | TC-X-04 | Kotlin composed annotation with `@get:AliasFor(annotation = Modulithic::class, attribute = "additionalPackages")` ([S-X-04](#s-x-04)) | ✔ `additionalPackages` and `sharedModules` honored (`other-billing` detected, `+shared` in the lists) | Commit `693d3abefa8cc` handles Java; check Kotlin |
@@ -821,13 +875,13 @@ expected failures; if one passes on the pre-fix build, correct `test.md` A.3.
 
 | ID | Pri | Runtime | IDE expected | Baseline prediction | Baseline observed | Fixed build observed | Status | Issue |
 |---|---|---|---|---|---|---|---|---|
-| TC-DECL-01 | P1 | module `order` ✔ | icon + `Order Module` + Structure | icon, no text | | | ☐ Pass ☐ Fail | |
-| TC-DECL-02 | P2 | display names ✔ | location text | dir name only | | | ☐ Pass ☐ Fail | |
+| TC-DECL-01 | P1 | module `order` ✔ | green padlock + `Order Module` + Structure | green padlock, no text | | | ☐ Pass ☐ Fail | |
+| TC-DECL-02 | P2 | display names ✔ | four location texts (R17) | none | | | ☐ Pass ☐ Fail | |
 | TC-DECL-03 | P2 | id `catalog` ✔, survives rename ✔ | `Id: catalog` before and after rename | dir name | | | ☐ Pass ☐ Fail | |
 | TC-DECL-04 | P2 | detected ✔ | as class | as class | | | ☐ Pass ☐ Fail | |
-| TC-DECL-05 | P2 | ni `api` ✔ | icon + Structure | works | | | ☐ Pass ☐ Fail | |
-| TC-DECL-06 | P1 | OPEN, legal ✔ | not flagged, green | **flagged** | | | ☐ Pass ☐ Fail | |
-| TC-DECL-06b | P2 | OPEN, legal ✔ | not flagged, green | **flagged** | | | ☐ Pass ☐ Fail | |
+| TC-DECL-05 | P2 | ni `api` ✔ | green padlock + Structure | works | | | ☐ Pass ☐ Fail | |
+| TC-DECL-06 | P1 | OPEN, legal ✔ | not flagged, green padlock | **flagged, red padlock** | | | ☐ Pass ☐ Fail | |
+| TC-DECL-06b | P2 | OPEN, legal ✔ | not flagged, green padlock | **flagged, red padlock** | | | ☐ Pass ☐ Fail | |
 | TC-DECL-07 | P1 | carrier read; snippet violation ✔ | text + snippet flagged | **ignored** | | | ☐ Pass ☐ Fail | |
 | TC-DECL-08 | P2 | IllegalStateException ✔ | no exception, warning | ignores both | | | ☐ Pass ☐ Fail | temporary |
 | TC-DECL-09 | P1 | ni kept, legal ✔ | ni kept, not flagged | **ni lost, flagged** | | | ☐ Pass ☐ Fail | temporary |
@@ -841,7 +895,7 @@ expected failures; if one passes on the pre-fix build, correct `test.md` A.3.
 | TC-DECL-16b | P2 | type-level ni only ✔ | same as runtime | same | | | ☐ Pass ☐ Fail | temporary |
 | TC-DECL-17 | P2 | a) 2 violations, b) legal ✔ | a) both flagged, b) none | **a) `CatalogChanged` not flagged** | | | ☐ Pass ☐ Fail | temporary |
 | TC-DECL-18 | P2 | `OrderUtils` exposed ✔ | listed | same | | | ☐ Pass ☐ Fail | temporary |
-| TC-NEST-01 | P1 | `order.web` ✔ | nested icon, Structure | **internal package** | | | ☐ Pass ☐ Fail | |
+| TC-NEST-01 | P1 | `order.web` ✔ | yellow padlock + `Order Web`, Structure | **red padlock, absent** | | | ☐ Pass ☐ Fail | |
 | TC-NEST-02 | P2 | legal ✔ | not flagged | not flagged | | | ☐ Pass ☐ Fail | |
 | TC-NEST-03 | P2 | legal ✔ | not flagged | not flagged | | | ☐ Pass ☐ Fail | |
 | TC-NEST-04 | P2 | violation ✔ | flagged | not flagged | | | ☐ Pass ☐ Fail | temporary |
@@ -903,13 +957,13 @@ expected failures; if one passes on the pre-fix build, correct `test.md` A.3.
 | TC-QF-05 | P1 | result compiles, context starts ✔ | warning + fix | **no warning** | | | ☐ Pass ☐ Fail | |
 | TC-QF-06 | P2 | n/a | preview without exception | same | | | ☐ Pass ☐ Fail | |
 | TC-QF-07 | P2 | n/a | one undo step | same | | | ☐ Pass ☐ Fail | |
-| TC-VIEW-01 | P2 | §3.3 | icon list | **nested and OPEN red** | | | ☐ Pass ☐ Fail | |
-| TC-VIEW-02 | P2 | §3.3 | six display names | **none** | | | ☐ Pass ☐ Fail | |
+| TC-VIEW-01 | P2 | §3.3 | icons per §3.4 | **nested and OPEN internals red** | | | ☐ Pass ☐ Fail | |
+| TC-VIEW-02 | P2 | §3.3 | four location texts | **none** | | | ☐ Pass ☐ Fail | |
 | TC-VIEW-03 | P2 | n/a | stable in both modes | same | | | ☐ Pass ☐ Fail | |
 | TC-VIEW-04 | P2 | n/a | same icon and text | record | | | ☐ Pass ☐ Fail | |
 | TC-VIEW-05 | P2 | §3.3 | full Structure | **partial** | | | ☐ Pass ☐ Fail | |
 | TC-VIEW-06 | P2 | n/a | as VIEW-05 | same | | | ☐ Pass ☐ Fail | temporary |
-| TC-VIEW-07 | P2 | n/a | restricted indicator | no indicator | | | ☐ Pass ☐ Fail | temporary |
+| TC-VIEW-07 | P2 | n/a | yellow warning triangle | internal beans only | | | ☐ Pass ☐ Fail | temporary |
 | TC-VIEW-08 | P2 | `runtime-structure.txt` | identical | **mismatch** | | | ☐ Pass ☐ Fail | |
 | TC-EVT-01 | P3 | n/a | not unused | record | | | ☐ Pass ☐ Fail | |
 | TC-EVT-02 | P3 | legal ✔ | not flagged | same | | | ☐ Pass ☐ Fail | |
@@ -929,14 +983,14 @@ expected failures; if one passes on the pre-fix build, correct `test.md` A.3.
 | TC-SRC-09 | P3 | no effect ✔ | empty model, no exception | same | | | ☐ Pass ☐ Fail | temporary |
 | TC-SRC-10 | P1 | 11 modules, IllegalArgumentException ✔ | same set, unknown `"inventory"` | **zero modules** | | | ☐ Pass ☐ Fail | temporary |
 | TC-SRC-11 | P3 | yml honored, profile not ✔ | same | record | | | ☐ Pass ☐ Fail | temporary |
-| TC-SRC-12 | P3 | `other-billing` ✔ | icon + `Other Billing` | record | | | ☐ Pass ☐ Fail | |
+| TC-SRC-12 | P3 | `other-billing` ✔ | green padlock + `Other Billing` | record | | | ☐ Pass ☐ Fail | |
 | TC-SRC-13 | P3 | IllegalStateException ✔ | no exception | same | | | ☐ Pass ☐ Fail | temporary |
 | TC-SRC-14 | P3 | n/a | five starters | same | | | ☐ Pass ☐ Fail | wizard |
 | TC-LIVE-01 | P3 | n/a | text updates | no text | | | ☐ Pass ☐ Fail | |
 | TC-LIVE-02 | P3 | legal ✔ | error disappears | nothing | | | ☐ Pass ☐ Fail | temporary |
-| TC-LIVE-03 | P1 | n/a | becomes nested module | **stays red** | | | ☐ Pass ☐ Fail | temporary |
+| TC-LIVE-03 | P1 | n/a | red → yellow padlock | **stays red** | | | ☐ Pass ☐ Fail | temporary |
 | TC-LIVE-04 | P3 | n/a | reverts to internal | stays red | | | ☐ Pass ☐ Fail | temporary |
-| TC-LIVE-05 | P3 | n/a | icon and error toggle | stays red | | | ☐ Pass ☐ Fail | temporary |
+| TC-LIVE-05 | P3 | n/a | green ↔ red padlock, error toggles | stays red | | | ☐ Pass ☐ Fail | temporary |
 | TC-LIVE-06 | P3 | as SRC-10 ✔ | set changes | zero, then all | | | ☐ Pass ☐ Fail | temporary |
 | TC-LIVE-07 | P3 | n/a | previous state | same | | | ☐ Pass ☐ Fail | |
 | TC-LIVE-08 | P3 | n/a | no exception | same | | | ☐ Pass ☐ Fail | |
